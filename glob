@@ -1,0 +1,98 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'pp'
+
+module Mike
+  module Glob
+    def self.die(code,msg)
+      STDERR.puts(msg)
+      exit(code)
+    end
+    def self.dbg(msgs,prefix='')
+      msgs = [msgs] if msgs.class != Array
+      msgs.each do |msg|
+        msg.each_line do |line|
+          STDERR.puts("[DEBUG] [glob] #{prefix}#{line}")
+        end
+      end
+    end
+    def self.expand(patterns,o={})
+      patterns = [patterns] if patterns.class != Array
+      expansions = []
+      patterns.each do |pattern|
+        tokens = []
+        trailer = pattern
+        while trailer =~ /^(.*?)(\{[^\}]*\}|\[[^\]]*\])(.*)$/
+          tokens << [$1]
+          glob    = $2
+          trailer = $3
+          case glob
+            when /^\{(.*)\}$/
+              list  = $1
+              words = list.split(',')
+              words << '' if list =~ /^.*,$/
+              tokens << words
+            when /^\[(.*)\]$/
+              chars = ''
+              char_trailer = $1
+              while char_trailer =~ /^(.*?)(([^-])-([^-]))(.*)$/
+                chars += $1
+                range,b,e = $2,$3,$4
+                char_trailer = $5
+                begin
+                  if b.ord <= e.ord
+                    char_range = (b.ord..e.ord).to_a
+                  else
+                    char_range = (e.ord..b.ord).to_a.reverse
+                  end
+                rescue
+                  die(-1,"Error: Invalid character range '#{range}' in pattern '#{pattern}'")
+                end
+                char_range.each { |c| chars += c.chr }
+              end
+              chars += char_trailer
+              tokens << chars.chars
+          end
+        end
+        tokens << [trailer]
+        tokens.reverse! if o[:r]
+        expands = tokens[0]
+        dbg("start with =>\n  #{expands.join("\n  ")}") if o[:X]
+        tokens[1..-1].each do |slot|
+          next if slot.empty? or slot[0] == ''
+          dbg("add tokens =>\n  #{slot.join("\n  ")}") if o[:X]
+          expands = expands.product(slot)
+          expands.map! { |e| o[:r] ? e.reverse.join : e.join }
+          dbg("expands to =>\n  #{expands.join("\n  ")}") if o[:X]
+        end
+        expands.delete_if { |e| e !~ /#{o[:i]}/ } if o[:i]
+        expands.delete_if { |e| e =~ /#{o[:e]}/ } if o[:e]
+        expansions << expands
+      end
+      return expansions # array of arrays
+    end
+    def self.cli_app
+      o = {}
+      (op = OptionParser.new do |p|
+        p.banner =
+          "Usage:\n" +
+          "  #{File.basename($0)} [options] 'pattern' ['pattern' ...]\n" +
+          "Options:\n"
+        p.summary_indent = '  '; p.summary_width = 9
+        p.on("-i REGEX","Include only expansions that match REGEX.") { |v| o[:i] = v }
+        p.on("-e REGEX","Exclude all  expansions that match REGEX.") { |v| o[:e] = v }
+        p.on("-r",      "Expand each pattern's globs in reverse order.") { o[:r] = 1 }
+        p.on("-X",      "Print debugging info to STDERR.") { o[:X] = 1 }
+        p.on("-h",      "Display this help message and exit.") { puts(p.help); exit(0) }
+      end).parse!
+      expand(ARGV,o).each do |pattern|
+        pattern.each do |expansion|
+          puts expansion
+        end
+      end
+    end
+  end
+end
+
+Mike::Glob::cli_app if $0 == __FILE__
