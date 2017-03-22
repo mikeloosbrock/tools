@@ -1,7 +1,6 @@
 #!/usr/bin/env ruby
 
 require 'optparse'
-require 'pp'
 
 module Mike
   module Glob
@@ -71,7 +70,7 @@ module Mike
         end
         pattern_expansions << { pattern => expansions }
       end
-      return pattern_expansions # array of hashes mapping a pattern to its expansions
+      return pattern_expansions # array of hashes mapping each pattern to its expansions
     end
     def self.expand(patterns,o={})
       aoh = expand_per(patterns,o)
