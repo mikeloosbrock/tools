@@ -17,60 +17,67 @@ module Mike
         end
       end
     end
-    def self.expand(patterns,o={})
+    def self.expand_per(patterns,o={})
       patterns = [patterns] if patterns.class != Array
-      expansions = []
+      pattern_expansions = []
       patterns.each do |pattern|
-        tokens = []
-        trailer = pattern
-        while trailer =~ /^(.*?)(\{[^\}]*\}|\[[^\]]*\])(.*)$/
-          tokens << [$1]
-          glob    = $2
-          trailer = $3
+        dbg("#{'-'*40}\nparsing pattern '#{pattern}' =>") if o[:X]
+        tokens    = []
+        remaining = pattern
+        while remaining =~ /^(.*?)(\{[^\}]*\}|\[[^\]]*\])(.*)$/
+          tokens  << { type: 'string', raw: $1 }
+          glob      = $2
+          remaining = $3
           case glob
             when /^\{(.*)\}$/
+              dbg("  found word list '#{glob}'") if o[:X]
               list  = $1
               words = list.split(',')
               words << '' if list =~ /^.*,$/
-              tokens << words
+              tokens << { type: 'word list', raw: glob, values: words }
             when /^\[(.*)\]$/
+              dbg("  found character list '#{glob}'") if o[:X]
               chars = ''
-              char_trailer = $1
-              while char_trailer =~ /^(.*?)(([^-])-([^-]))(.*)$/
+              remaining_chars = $1
+              while remaining_chars =~ /^(.*?)(([^-])-([^-]))(.*)$/
                 chars += $1
-                range,b,e = $2,$3,$4
-                char_trailer = $5
-                begin
-                  if b.ord <= e.ord
-                    char_range = (b.ord..e.ord).to_a
-                  else
-                    char_range = (e.ord..b.ord).to_a.reverse
-                  end
-                rescue
-                  die(-1,"Error: Invalid character range '#{range}' in pattern '#{pattern}'")
-                end
+                range,first,last = $2,$3,$4
+                remaining_chars = $5
+                dbg("    with character range '#{range}'") if o[:X]
+                char_range = (first.ord..last.ord).to_a
+                char_range = (last.ord..first.ord).to_a.reverse if first.ord > last.ord
                 char_range.each { |c| chars += c.chr }
               end
-              chars += char_trailer
-              tokens << chars.chars
+              chars += remaining_chars
+              tokens << { type: 'character list', raw: glob, values: chars.chars }
           end
         end
-        tokens << [trailer]
+        tokens << { type: 'string', raw: remaining }
         tokens.reverse! if o[:r]
-        expands = tokens[0]
-        dbg("start with =>\n  #{expands.join("\n  ")}") if o[:X]
-        tokens[1..-1].each do |slot|
-          next if slot.empty? or slot[0] == ''
-          dbg("add tokens =>\n  #{slot.join("\n  ")}") if o[:X]
-          expands = expands.product(slot)
-          expands.map! { |e| o[:r] ? e.reverse.join : e.join }
-          dbg("expands to =>\n  #{expands.join("\n  ")}") if o[:X]
+        expansions = ['']
+        tokens[0..-1].each do |token|
+          next if token[:type] == 'string' and token[:raw] == ''
+          dbg("expanding #{token[:type]} '#{token[:raw]}' =>") if o[:X]
+          token[:values] = [token[:raw]] if token[:type] == 'string'
+          expansions = expansions.product(token[:values])
+          expansions.map! { |e| o[:r] ? e.reverse.join : e.join }
+          dbg("  #{expansions.join("\n  ")}") if o[:X]
         end
-        expands.delete_if { |e| e !~ /#{o[:i]}/ } if o[:i]
-        expands.delete_if { |e| e =~ /#{o[:e]}/ } if o[:e]
-        expansions << expands
+        expansions.delete_if do |e|
+          if (o[:i] and e !~ /#{o[:i]}/) or (o[:e] and e =~ /#{o[:e]}/)
+            dbg("filtering out '#{e}'") if o[:X]
+            true
+          end
+        end
+        pattern_expansions << { pattern => expansions }
       end
-      return expansions # array of arrays
+      return pattern_expansions # array of hashes mapping a pattern to its expansions
+    end
+    def self.expand(patterns,o={})
+      aoh = expand_per(patterns,o)
+      arr = []
+      aoh.each { |h| h.each { |k,v| arr |= v } }
+      return arr
     end
     def self.cli_app
       o = {}
@@ -80,17 +87,27 @@ module Mike
           "  #{File.basename($0)} [options] 'pattern' ['pattern' ...]\n" +
           "Options:\n"
         p.summary_indent = '  '; p.summary_width = 9
+        p.on("-d STRNG","Output delimiter. If unspecified, a newline is used.") { |v| o[:d] = v }
         p.on("-i REGEX","Include only expansions that match REGEX.") { |v| o[:i] = v }
         p.on("-e REGEX","Exclude all  expansions that match REGEX.") { |v| o[:e] = v }
         p.on("-r",      "Expand each pattern's globs in reverse order.") { o[:r] = 1 }
         p.on("-X",      "Print debugging info to STDERR.") { o[:X] = 1 }
         p.on("-h",      "Display this help message and exit.") { puts(p.help); exit(0) }
+        p.separator("Word List Patterns:")
+        p.separator("  server-{foo,bar,baz}    => server-foo, server-bar, server-baz")
+        p.separator("  server{,-foo,-bar,-baz} => server server-foo, server-bar, server-baz")
+        p.separator("  server{-foo,-bar,-baz,} => server-foo, server-bar, server-baz server")
+        p.separator("Character List Patterns:")
+        p.separator("  server-[abc] => server-a server-b server-c")
+        p.separator("  server-[a-c] => server-a server-b server-c")
+        p.separator("  server-[c-a] => server-c server-b server-a")
+        p.separator("Combining Patterns:")
+        p.separator("  server-[abc][1-3]{,-mng} =>")
+        p.separator("    server-a1, server-a1-mng, server-a2, server-a2-mng, server-a3, server-a3-mng,")
+        p.separator("    server-b1, server-b1-mng, server-b2, server-b2-mng, server-b3, server-b3-mng,")
+        p.separator("    server-c1, server-c1-mng, server-c2, server-c2-mng, server-c3, server-c3-mng")
       end).parse!
-      expand(ARGV,o).each do |pattern|
-        pattern.each do |expansion|
-          puts expansion
-        end
-      end
+      puts expand(ARGV,o).join((o[:d] or "\n"))
     end
   end
 end
