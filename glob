@@ -92,14 +92,17 @@ module Mike
         p.on("-r",      "Expand each pattern's globs in reverse order.") { o[:r] = 1 }
         p.on("-X",      "Print debugging info to STDERR.") { o[:X] = 1 }
         p.on("-h",      "Display this help message and exit.") { puts(p.help); exit(0) }
+        p.separator("")
         p.separator("Word List Patterns:")
         p.separator("  server-{foo,bar,baz}    => server-foo, server-bar, server-baz")
         p.separator("  server{,-foo,-bar,-baz} => server server-foo, server-bar, server-baz")
         p.separator("  server{-foo,-bar,-baz,} => server-foo, server-bar, server-baz server")
+        p.separator("")
         p.separator("Character List Patterns:")
         p.separator("  server-[abc] => server-a server-b server-c")
         p.separator("  server-[a-c] => server-a server-b server-c")
         p.separator("  server-[c-a] => server-c server-b server-a")
+        p.separator("")
         p.separator("Combining Patterns:")
         p.separator("  server-[abc][1-3]{,-mng} =>")
         p.separator("    server-a1, server-a1-mng, server-a2, server-a2-mng, server-a3, server-a3-mng,")

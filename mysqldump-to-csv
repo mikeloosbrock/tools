@@ -1,0 +1,72 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'csv'
+
+def die(code,msg) STDERR.puts(msg); exit(code) end
+
+def main
+  o = {:q=>"'"}
+  begin
+    (op = OptionParser.new do |p|
+      p.banner =
+        "Usage:\n" +
+        "  #{File.basename($0)} [options] < mysql.dump\n" +
+        "Options:"
+        p.summary_indent = '  '; p.summary_width = 9
+        p.on("-l",      "Only list the tables in the dump file.")                              { |v| o[:l] = 1 }
+        p.on("-t REGEX","Table filter. Only table names matching REGEX are converted/output.") { |v| o[:t] = v }
+        p.on("-r REGEX","Row filter. Only row content matching REGEX is converted/output.")    { |v| o[:r] = v }
+        p.on("-c COUNT","Row limit. Only COUNT rows are converted/output per table.")          { |v| o[:c] = v.to_i }
+        p.on("-q CHAR", "Field value quote character. Defaults to #{o[:q]}.")                  { |v| o[:q] = v }
+        p.on("-s COLS", "COLS is a comma-separated list of columns to sanitize.")              { |v| o[:s] = v.split(',').map { |i| i.to_i } }
+        p.on("-h",      "Display this help message and exit.") { die(0,p.help) }
+    end).parse!
+  rescue
+    die(-1,"Error: Invalid options specified.\n#{op.help}")
+  end
+  table, last_table, fields, row_cnt = nil, nil, [], 0
+  STDIN.each do |line|
+    line.gsub!(/\s+$/,'')
+    case
+      when line =~ /^CREATE TABLE `(\S+)` \($/
+        table_name = $1
+        next if o[:t] and table_name !~ /#{o[:t]}/
+        table, fields, row_cnt = table_name, [], 0
+      when table && line =~ /^\s+`(\S+)` .*$*/
+        field_name = $1
+        fields << field_name
+      when table && line =~ /^\) .*$/
+        puts "\n# #{table}\n\"#{fields.join('","')}\""
+        last_table = table
+        table = nil
+      when line =~ /^INSERT INTO `(\S+)` VALUES \((.+)\);$/
+        table_name, rows = $1, $2
+        next if o[:l] or (o[:t] and table_name !~ /#{o[:t]}/)
+        begin
+          if table_name != last_table
+            raise "The table CREATE and INSERT statements are out of order."
+          end
+          rows.split('),(').each do |row|
+            next if o[:r] and row !~ /#{o[:r]}/
+            next if o[:c] and row_cnt >= o[:c]
+            row.gsub!(/\\#{o[:q]}/,"#{o[:q]}#{o[:q]}")  # make escaped quotes csv-complient
+            row.gsub!(/\\"/,'""')  # make escaped quotes csv-complient
+            cols = CSV.parse_line(row,:quote_char=>o[:q])
+            if cols.size != fields.size
+              raise "row = #{row}\nError: The table has #{fields.size} columns, but this row has #{cols.size}"
+            end
+            if o[:s]
+              o[:s].each { |i| cols[i-1] = '*'*cols[i-1].size }
+            end
+            puts "\"#{cols.join('","')}\""
+            row_cnt += 1
+          end
+        rescue => e
+          die(-1,"Error: table = #{table_name}\nError: #{e}")
+        end
+    end
+  end
+end
+
+main if $0 == __FILE__

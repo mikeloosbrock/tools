@@ -1,0 +1,177 @@
+#!/usr/bin/env python
+
+import jinja2
+import optparse
+import sys
+import yaml
+import pprint
+
+#==============================================================================#
+
+def die(code,msg):
+  sys.stderr.write(msg+"\n")
+  sys.exit(code)
+
+#==============================================================================#
+
+def get_inputs(opts,args):
+  tmpl = None # the jinja template to expand
+  vars = None # the variables to use in the template
+  #--------------------------------------------------------#
+  t_vars = None
+  if opts.t:
+    try:
+      lines = open(opts.t,'r').read()
+    except Exception as e:
+      die(-2,"Error: Unable to read the -t template file '%s'.\nReason: %s" % (opts.t,e))
+    try:
+      t_dict = yaml.load(lines)
+      if type(t_dict) != dict:
+        die(-2,"Error: The -t template file '%s' did not YAML-parse into a dict." % opts.t)
+      if not t_dict.has_key('template'):
+        die(-2,"Error: The -t template file '%s' does not have a 'template' key." % opts.t)
+      tmpl = t_dict['template']
+      if type(tmpl) != str:
+        die(-2,"Error: The 'template' key in the -t template file '%s' is not a string." % opts.t)
+      if t_dict.has_key('variables'):
+        t_vars = t_dict['variables']
+        if type(t_vars) != dict and type(t_vars) != list:
+          die(-2,"Error: The 'variables' key in the -t template file '%s' is not a dict or list." % opts.t)
+    except:
+      tmpl = lines
+  #--------------------------------------------------------#
+  v_vars = None
+  if opts.v:
+    try:
+      lines = open(opts.v,'r').read()
+    except Exception as e:
+      die(-2,"Error: Unable to read the -v variable file '%s'.\nReason: %s" % (opts.v,e))
+    try:
+      v_vars = yaml.load(lines)
+    except Exception as e:
+      die(-2,"Error: Unable to YAML-parse the -v variable file '%s'.\nReason: %s" % (opts.v,e))
+    if type(v_vars) != dict and type(v_vars) != list:
+      die(-2,"Error: The -v variable file '%s' did not YAML-parse into a dict or list." % opts.v)
+    if type(v_vars) == dict and v_vars.has_key('variables'):
+      v_vars = v_vars['variables']
+      if type(v_vars) != dict and type(v_vars) != list:
+        die(-2,"Error: The 'variables' key in the -v variable file '%s' is not a dict or list." % opts.v)
+  #--------------------------------------------------------#
+  a_vars = None
+  if len(args) == 1:
+    try:
+      lines = open(args[0],'r').read()
+    except Exception as e:
+      die(-2,"Error: Unable to read the input file '%s'.\nReason: %s" % (args[0],e))
+    try:
+      a_dict = yaml.load(lines)
+    except Exception as e:
+      die(-2,"Error: Unable to YAML-parse the input file '%s'.\nReason: %s" % (args[0],e))
+    if type(a_dict) != dict:
+      die(-2,"Error: The input file '%s' did not YAML-parse into a dict." % args[0])
+    if tmpl == None and a_dict.has_key('template'):
+      tmpl = a_dict['template']
+      if type(tmpl) != str:
+        die(-2,"Error: The 'template' key in the input file '%s' is not a string." % args[0])
+    if a_dict.has_key('variables'):
+      a_vars = a_dict['variables']
+      if type(a_vars) != dict and type(a_vars) != list:
+        die(-2,"Error: The 'variables' key in the input file '%s' is not a dict or list." % args[0])
+  #--------------------------------------------------------#
+  s_vars = None
+  if tmpl == None or (t_vars == None and v_vars == None and a_vars == None):
+    if opts.p:
+      die(-2,"Error: Input on STDIN is not allowed when variable prompting (-p) is specified.")
+    try:
+      s_dict = yaml.load(sys.stdin.read())
+    except Exception as e:
+      die(-2,"Error: Unable to YAML-parse the input on STDIN.\nReason: %s" % e)
+    if type(s_dict) != dict:
+      die(-2,"Error: The input on STDIN did not YAML-parse into a dict.")
+    if tmpl == None and s_dict.has_key('template'):
+      tmpl = s_dict['template']
+      if type(tmpl) != str:
+        die(-2,"Error: The 'template' key in the input on STDIN is not a string.")
+    if s_dict.has_key('variables'):
+      s_vars = s_dict['variables']
+      if type(s_vars) != dict and type(s_vars) != list:
+        die(-2,"Error: The 'variables' key in the input on STDIN is not a dict or list.")
+  #--------------------------------------------------------#
+  if tmpl == None:
+    die(-2,"Error: No template input was found.")
+  if t_vars == None and v_vars == None and a_vars == None and s_vars == None:
+    die(-2,"Error: No variable input was found.")
+  #--------------------------------------------------------#
+  vars = []
+  locs = {}
+  for var_src in [t_vars,v_vars,a_vars,s_vars]:
+    if var_src == None:
+      continue
+    if type(var_src) == dict:
+      if opts.s and var_src.has_key(opts.s):
+        print 'here'
+        var_src = var_src[opts.s]
+      for name in var_src.keys().sort():
+        if locs.has_key(name):
+          vars[locs[name]] = var_src[name]
+        else:
+          vars.append([name,var_src[name]])
+          locs[name] = len(vars) - 1
+  pprint.pprint([t_vars,v_vars,a_vars,s_vars])
+  #--------------------------------------------------------#
+  return (tmpl,vars)
+
+#==============================================================================#
+
+def render_vars(vars):
+  vars2 = vars
+  if type(vars) == list:
+    vars2 = {}
+    for v in vars:
+      for var, val in v.items():
+        vars2[var] = val
+
+  for var, val in vars2.items():
+    t = jinja2.Template(str(val))
+    vars2[var] = yaml.load(t.render(vars2))
+
+  if type(vars) == list:
+    for v in vars:
+      for var, val in v.items():
+        v[var] = vars2[var]
+
+
+def prompt_vars(vars):
+  for var, val in vars.items():
+    new = raw_input('%s [%s]: ' % (var,val))
+    vars[var] = new if new != '' else val
+
+#==============================================================================#
+
+def main():
+
+  p = optparse.OptionParser()
+  p.add_option("-t",dest="t",metavar="PATH",help="Use the jinja template file at PATH.")
+  p.add_option("-v",dest="v",metavar="PATH",help="Use the YAML variables defined in PATH.")
+  p.add_option("-s",dest="s",metavar="NAME",help="Use the the variable set named NAME.")
+  p.add_option("-p",dest="p",help="Prompt for variable values.")
+  (opts,args) = p.parse_args()
+
+  tmpl, vars = get_inputs(opts,args)
+
+  render_vars(vars)
+  if opts.p:
+    prompt_vars(vars)
+  render_vars(vars)
+
+  t = jinja2.Template(tmpl)
+  vars2 = vars
+  if type(vars) == list:
+    vars2 = {}
+    for v in vars:
+      for var, val in v.items():
+        vars2[var] = val
+  print t.render(vars2)
+
+if __name__ == '__main__':
+  main()
