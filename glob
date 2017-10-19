@@ -48,7 +48,7 @@ module Mike
                 char_range.each { |c| chars += c.chr }
               end
               chars += remaining_chars
-              tokens << { type: 'character list', raw: glob, values: chars.chars }
+              tokens << { type: 'character list', raw: glob, values: chars.chars.to_a }
           end
         end
         tokens << { type: 'string', raw: remaining }
@@ -84,13 +84,14 @@ module Mike
         p.banner =
           "Usage:\n" +
           "  #{File.basename($0)} [options] 'pattern' ['pattern' ...]\n" +
+          "\n" +
           "Options:\n"
         p.summary_indent = '  '; p.summary_width = 9
-        p.on("-d STRNG","Output delimiter. If unspecified, a newline is used.") { |v| o[:d] = v }
-        p.on("-i REGEX","Include only expansions that match REGEX.") { |v| o[:i] = v }
-        p.on("-e REGEX","Exclude all  expansions that match REGEX.") { |v| o[:e] = v }
+        p.on("-d STRNG","Output delimiter. Defaults to '\\n'.")          { |v| o[:d] = v }
+        p.on("-i REGEX","Include expansions that match REGEX.")          { |v| o[:i] = v }
+        p.on("-e REGEX","Exclude expansions that match REGEX.")          { |v| o[:e] = v }
         p.on("-r",      "Expand each pattern's globs in reverse order.") { o[:r] = 1 }
-        p.on("-X",      "Print debugging info to STDERR.") { o[:X] = 1 }
+        p.on("-X",      "Print debugging info to STDERR.")               { o[:X] = 1 }
         p.on("-h",      "Display this help message and exit.") { puts(p.help); exit(0) }
         p.separator("")
         p.separator("Word List Patterns:")
@@ -108,6 +109,7 @@ module Mike
         p.separator("    server-a1, server-a1-mng, server-a2, server-a2-mng, server-a3, server-a3-mng,")
         p.separator("    server-b1, server-b1-mng, server-b2, server-b2-mng, server-b3, server-b3-mng,")
         p.separator("    server-c1, server-c1-mng, server-c2, server-c2-mng, server-c3, server-c3-mng")
+        p.separator("")
       end).parse!
       puts expand(ARGV,o).join((o[:d] or "\n"))
     end
