@@ -1,0 +1,486 @@
+#!/usr/bin/env ruby
+
+require 'erb'
+require 'json'
+require 'net/http'
+require 'optparse'
+require 'pp'
+
+module Mike
+  module PeeringDB
+    def die(code,msg) STDERR.puts(msg); exit(code) end
+    def dbg(msg) msg.each_line { |line| STDERR.puts("[DEBUG] #{line}") } end
+    class Client
+      def initialize(opts)
+        
+      end
+      def dbg(msg,prefix='')
+        debug(
+      end
+      def request(method,url,params={},body=nil,hdrs={})
+        _params = params                                           # by
+        _params = URI.encode_www_form(params) if params.is_a Hash  # url-encode the params if necessary
+        _url = "/#{@cfg['url-prefix']}/#{url}".gsub(/\/+/,'/')     # build the base url, removing redundant '/' chars
+        _url += (_url =~ /\?/ ? '' : '?') + _params                # add the url-encoded params to the base url
+        _body = body
+        _body = json. if not bodyString ? : )
+        _hdrs =
+        response = http.send_request(method,_url,_body,_hdrs)
+
+
+
+        query = "#{o[:U]}/#{query}"
+        dbg("PeeringDB Query: '#{query}'") if o[:X]
+        begin
+          json = Net::HTTP.get(URI(_query))
+        rescue Exception => e
+          die(-2,"error: api query '#{query}' failed\nreason: #{e}")
+        end
+        begin
+          data = JSON.parse(json)
+        rescue Exception => e
+          dbg("PeeringDB Response:\n#{json}") if o[:X]
+          die(-3,"error: can't parse the response to api query '#{query}'\nreason: #{e}")
+        end
+        dbg("PeeringDB Response:\n#{data.pretty_inspect}") if o[:X]
+        data = data['data'] if data.is_a?(Hash) and data.key?('data')
+        return data if not block
+        data.each { |i| yield i }
+      end
+    end
+  end
+end
+
+
+#
+# .
+#
+def pdb_query(o,query,&block)
+  query = "#{o[:U]}/#{query}"
+  dbg("PeeringDB Query: '#{query}'") if o[:X]
+  begin
+    json = Net::HTTP.get(URI(query))
+  rescue Exception => e
+    die(-2,"error: api query '#{query}' failed\nreason: #{e}")
+  end
+  begin
+    data = JSON.parse(json)
+  rescue Exception => e
+    dbg("PeeringDB Response:\n#{json}") if o[:X]
+    die(-3,"error: can't parse the response to api query '#{query}'\nreason: #{e}")
+  end
+  dbg("PeeringDB Response:\n#{data.pretty_inspect}") if o[:X]
+  data = data['data'] if data.is_a?(Hash) and data.key?('data')
+  return data if not block
+  data.each { |i| yield i }
+end
+#
+# Convenience method to concatenate fields in an array of hashes.
+#
+# @param aoh    [Array<Hash>|Hash] the array of hashes (modified in place).
+# @param name   [String] the name of the new concatenation field.
+# @param fields [Array<String>] the names of the fields to concatenate.
+# @param sep    [String] the separator between the concatenated field values.
+#
+def aoh_concat(aoh,name,fields,sep=', ')
+  _aoh = (aoh.is_a?(Array) ? aoh : [aoh])
+  _aoh.each do |h|
+    fmt, args = '', []
+    fields.each do |f|
+      next if !h[f] or h[f] == ''
+      fmt  << (fmt == '' ? '' : ', ') + '%s'
+      args << h[f].strip
+    end
+    h[name] = sprintf(fmt,*args)
+  end
+end
+#
+# Convenience method to concatenate address fields in an array of hashes.
+#
+# @param aoh [Array<Hash>|Hash] the array of hashes (modified in place).
+#
+def aoh_address(aoh)
+  _aoh = (aoh.is_a?(Array) ? aoh : [aoh])
+  fields = ['address1','address2','city','state','zipcode','country']
+  aoh_concat(_aoh,'address',fields)
+end
+#
+# Convenience method to sort an array of hashes.
+#
+# @param aoh  [Array<Hash>|Hash] the array of hashes (modified in place).
+# @param sort [Array<String>] the ordered list of sort field names.
+#
+def aoh_sort(aoh,sort=[])
+  _aoh = (aoh.is_a?(Array) ? aoh : [aoh])
+  _aoh.each do |h|
+    h[:_sort_key] = ''
+    sort.each { |f| h[:_sort_key] += h[f].to_s }
+  end
+  _aoh.sort! { |a,b| a[:_sort_key] <=> b[:_sort_key] }
+end
+#
+# Convenience method to calculate the max field widths in an array of hashes.
+#
+# @param aoh  [Array<Hash>|Hash] the array of hashes.
+# @param maxw [Hash] an optional hash of field names to max value widths.
+#
+# @return [Hash] the max widths of each field.
+#
+def aoh_maxw(aoh,maxw={})
+  _aoh = (aoh.is_a?(Array) ? aoh : [aoh])
+  widths = {}
+  _aoh.each do |h|
+    h.each do |k,v|
+      v = v.to_s
+      widths[k] = v.length if widths[k].nil? or widths[k] < v.length
+    end
+  end
+  widths.each { |f,w| widths[f] = maxw[f] if maxw[f] and w > maxw[f] }
+  return widths
+end
+#
+# Convenience method to print an array of hashes as a table.
+#
+# @param aoh  [Array<Hash>|Hash] the array of hashes.
+# @param opts [Hash] the table display options.
+#
+def aoh_table(aoh,opts)
+  _aoh = (aoh.is_a?(Array) ? aoh : [aoh])
+  opts[:display] = {} if not opts[:display]
+  opts[:sort]    = [] if not opts[:sort]
+  opts[:sort]    = opts[:sort].split(/,/) if opts[:sort].is_a?(String)
+  opts[:maxw]    = {} if not opts[:maxw]
+  opts[:indent]  = '' if not opts[:indent]
+  aoh_sort(_aoh,opts[:sort])
+  h={}; opts[:display].each { |f,t| h[f] = t }
+  _aoh.unshift(h)
+  w = aoh_maxw(_aoh,opts[:maxw])
+  _aoh.each do |h|
+    fmt, args = opts[:indent].clone, []
+    opts[:display].keys.each do |f|
+      next if !h.key?(f)
+      fmt  << '%-*s  '
+      args << w[f]
+      v = h[f].to_s
+      v = v[0..(w[f]-4)] + '...' if v.length > w[f]
+      args << v
+    end
+    puts sprintf(fmt.rstrip,*args)
+  end
+end
+#
+# .
+#
+def main
+  begin
+    o={:A=>62715,:U=>'https://www.peeringdb.com/api'}
+    (op = OptionParser.new do |p|
+      app = File.basename($0)
+      p.banner =
+        "Usage:\n" +
+        "  #{app} asn <ASN|NAME|QUERY> [-feNvcCAUX] \n" +
+        "  #{app} net <ID|NAME|QUERY>  [-feNvcCAUX] \n" +
+        "  #{app} org <ID|NAME|QUERY>  [-fenNvcCAUX]\n" +
+        "  #{app} fac <ID|NAME|QUERY>  [-enNvcCAUX] \n" +
+        "  #{app} ix  <ID|NAME|QUERY>  [-fnNvcCAUX] \n" +
+        "  #{app} raw <API-QUERY>      [-UX]        \n" +
+        "Options:"
+      p.summary_indent='  '; p.summary_width=7
+      p.on("-n","Enumerate any associated networks.")   { o[:n] = true }
+      p.on("-f","Enumerate any associated facilities.") { o[:f] = true }
+      p.on("-e","Enumerate any associated exchanges.")  { o[:e] = true }
+      p.on("-N","Show any associated notes.")           { o[:N] = true }
+      p.on("-v","Verbose output. Same as -nfeN.")       { o[:v] = true }
+      p.on("-c","Mark any facilities and exchanges in common with the ASN specified by -A.")  { o[:c] = true }
+      p.on("-C","Only show facilities and exchanges in common with the ASN specified by -A.") { o[:C] = true }
+      p.on("-A ASN","The ASN used with the -c and -C options. Defaults to '#{o[:A]}'.")       { |v| o[:A] = v }
+      p.on("-U URL","Base URL for PDB API queries. Defaults to '#{o[:U]}'.")                  { |v| o[:U] = v }
+      p.on("-X","Print debugging information to STDERR.") { o[:X] = true }
+      p.on("-h","Display this help message and exit.")    { die(0,p.help) }
+    end).parse!
+  rescue
+    die(-1,'error: invalid options specified')
+  end
+  if o[:c] or o[:C]
+    nets = pdb_query(o,"net?asn=#{o[:A]}&depth=3")
+    if !nets.is_a?(Array) || nets.empty?
+      die(-1,"Comparison ASN #{o[:A]} does not exist.")
+    end
+    net = nets[0]
+    a_faclist = net['netfac_set'].map   { |fac| fac['fac_id'] }
+    a_ixlist  = net['netixlan_set'].map { |ix| ix['ix_id'] }
+  end
+  case ARGV.join(' ')
+    when /^((?:a(?:s(?:n)?)?)|(?:n(?:e(?:t(?:w(?:o(?:r(?:k)?)?)?)?)?)?))\s+(.*)$/i
+      cmd, arg = $1, $2
+      arg = "as#{arg}" if cmd =~ /^as?n?/i and arg =~ /^\d+$/
+      nets = case arg
+        when /^\d+$/      then pdb_query(o,"net/#{arg}")
+        when /^as(\d+)$/i then pdb_query(o,"net?asn=#{$1}&depth=3")
+        when /^[^=]+$/    then pdb_query(o,"net?name__contains=#{arg.gsub(/ /,'+')}")
+        else pdb_query(o,"net?#{arg}")
+      end
+      case
+        when !nets.is_a?(Array) || nets.empty?
+          die(-1,"No matching networks found.")
+        when nets.size == 1
+          nets = pdb_query(o,"net/#{nets[0]['id']}") if !nets[0]['org']
+          net  = nets[0];
+          org  = net['org'];
+          facs = net['netfac_set']
+          ixes = net['netixlan_set']
+          website = (net['website'] != '' ? net['website'] : org['website'])
+          aoh_concat(net,'scope',['info_scope','info_type','info_traffic','info_ratio'])
+          prefixes = "#{net['info_prefixes4']} IPv4, #{net['info_prefixes6']} IPv6"
+          prefixes += ", IRR: #{net['irr_as_set']}" if net['irr_as_set'] != ''
+          facilities = "#{facs.size}"
+          exchanges  = "#{ixes.size}"
+          c_faclist = []
+          c_ixlist  = []
+          if o[:c] or o[:C]
+            c_faclist = facs.map { |fac| fac['fac_id'] } & a_faclist
+            facilities += ", #{c_faclist.size} in common with AS#{o[:A]}"
+            c_ixlist = ixes.map { |ix| ix['ix_id'] } & a_ixlist
+            exchanges += ", #{c_ixlist.size} in common with AS#{o[:A]}"
+          end
+          puts "Organization  : #{org['name']} (#{org['id']})"
+          puts "Network       : AS#{net['asn']} => #{net['name']} (#{net['id']})"
+          puts "Website       : #{website}"
+          puts "Scope         : #{net['scope']}"
+          puts "Prefixes      : #{prefixes}"
+          puts "Route Server  : #{net['route_server']}"  if net['route_server']  != ''
+          puts "Looking Glass : #{net['looking_glass']}" if net['looking_glass'] != ''
+          puts "Facilities    : #{facilities}"
+          if (o[:v] or o[:f]) and facs.size > 0
+            faclist = facs.map { |fac| fac['fac_id'] }
+            faclist = c_faclist if o[:C]
+            facs = pdb_query(o,"fac?id__in=#{faclist.join(',')}")
+            if o[:c] and !o[:C]
+              facs.each { |fac| fac['id'] = "#{fac['id']}*" if c_faclist.include?(fac['id']) }
+            end
+            aoh_address(facs)
+            table_opts = {
+              :display => {'id'=>'ID','name'=>'Name','address'=>'Address'},
+              :sort    => 'name',
+              :maxw    => {'name'=>34,'address'=>34},
+              :indent  => '  ' }
+            aoh_table(facs,table_opts)
+          end
+          puts "Exchanges     : #{exchanges}"
+          if o[:c] and !o[:C]
+            ixes.each do |ix|
+              ix['ix_id'] = "#{ix['ix_id']}*" if c_ixlist.include?(ix['ix_id'])
+            end
+          end
+          if o[:C]
+            ixes.delete_if { |ix| !c_ixlist.include?(ix['ix_id']) }
+          end
+          if (o[:v] or o[:e]) and ixes.size > 0
+            ixes.each do |ix|
+              ix['rs'] = (ix['is_rs_peer'] ? 'Yes' : 'No')
+              s = ix['speed']
+              ix['bw'] = (s >= 1000 ? "#{s/1000}G" : "#{s}M")
+            end
+            table_opts = {
+              :display => {'ix_id'=>'ID','name'=>'Name','bw'=>'BW','rs'=>'RS',
+                           'asn'=>'ASN','ipaddr4'=>'IPv4', 'ipaddr6'=>'IPv6'},
+              :sort    => 'name',
+              :maxw    => {'name'=>34},
+              :indent  => '  ' }
+            aoh_table(ixes,table_opts)
+          end
+          if (o[:v] or o[:N]) and net['notes'] != ''
+            puts "Notes:\n#{net['notes']}"
+          end
+        else
+          puts "#{nets.size} Matching Networks =>"
+          table_opts = {
+            :display => {'id'=>'ID','asn'=>'ASN','name'=>'Name'},
+            :sort    => 'name',
+            :maxw    => {'name'=>62},
+            :indent  => '  ' }
+          aoh_table(nets,table_opts)
+      end
+    #----------------------------------#
+    when /^(o(?:r(?:g(?:a(?:n(?:i(?:z(?:a(?:t(?:i(?:o(?:n)?)?)?)?)?)?)?)?)?)?)?)\s+(.*)$/i
+      orgs = case (arg = $2)
+        when /^\d+$/   then pdb_query(o,"org/#{arg}")
+        when /^[^=]+$/ then pdb_query(o,"org?name__contains=#{arg.gsub(/ /,'+')}")
+        else pdb_query(o,"org?#{arg}")
+      end
+      case
+        when !orgs.is_a?(Array) || orgs.empty?
+          die(-1,"No matching organizations found.")
+        when orgs.size == 1
+          orgs = pdb_query(o,"org/#{orgs[0]['id']}") if !orgs[0]['net_set']
+          org  = orgs[0]
+          nets = org['net_set']
+          netlist = nets.map { |net| net['id'] }
+          facs = pdb_query(o,"netfac?net_id__in=#{netlist.join(',')}")
+          aoh_address(org)
+          facilities = "#{facs.size}"
+          c_faclist = []
+          if o[:c] or o[:C]
+            c_faclist = facs.map { |fac| fac['fac_id'] } & a_faclist
+            facilities += ", #{c_faclist.size} in common with AS#{o[:A]}"
+          end
+          puts "Organization : #{org['name']} (#{org['id']})"
+          puts "Address:     : #{org['address']}"
+          puts "Website      : #{org['website']}"
+          puts "Facilities   : #{facilities}"
+          if (o[:v] or o[:f]) and facs.size > 0
+            faclist = facs.map { |fac| fac['fac_id'] }
+            faclist = c_faclist if o[:C]
+            facs = pdb_query(o,"fac?id__in=#{faclist.join(',')}")
+            if o[:c] and !o[:C]
+              facs.each { |fac| fac['id'] = "#{fac['id']}*" if c_faclist.include?(fac['id']) }
+            end
+            aoh_address(facs)
+            table_opts = {
+              :display => {'id'=>'ID','name'=>'Name','address'=>'Address'},
+              :sort    => 'name',
+              :maxw    => {'name'=>34,'address'=>34},
+              :indent  => '  ' }
+            aoh_table(facs,table_opts)
+          end
+          puts "Networks     : #{nets.size}"
+          if (o[:v] or o[:n]) and nets.size > 0
+            table_opts = {
+              :display => {'id'=>'ID','asn'=>'ASN','name'=>'Name'},
+              :sort    => 'name',
+              :maxw    => {'name'=>62},
+              :indent  => '  ' }
+            aoh_table(nets,table_opts)
+          end
+          if (o[:v] or o[:N]) and org['notes'] != ''
+            puts "Notes:\n#{org['notes']}"
+          end
+        else
+          puts "#{orgs.size} Matching Organizations =>"
+          table_opts = {
+            :display => {'id'=>'ID','name'=>'Name','website'=>'Website'},
+            :sort    => 'name',
+            :maxw    => {'name'=>34},
+            :indent  => '  ' }
+          aoh_table(orgs,table_opts)
+      end
+    #----------------------------------#
+    when /^(f(?:a(?:c(?:i(?:l(?:i(?:t(?:y)?)?)?)?)?)?)?)\s+(.*)$/i
+      facs = case (arg = $2)
+        when /^\d+$/   then pdb_query(o,"fac/#{arg}")
+        when /^[^=]+$/ then pdb_query(o,"fac?name__contains=#{arg.gsub(/ /,'+')}")
+        else pdb_query(o,"fac?#{arg}")
+      end
+      case
+        when !facs.is_a?(Array) || facs.empty?
+          die(-1,"No matching facilities found.")
+        when facs.size == 1
+          facs = pdb_query(o,"fac/#{facs[0]['id']}") if !facs[0]['org']
+          fac  = facs[0]
+          org  = fac['org'];
+          ixes = pdb_query(o,"ixfac?fac_id=#{fac['id']}")
+          nets = pdb_query(o,"netfac?fac_id=#{fac['id']}")
+          aoh_address(fac)
+          website = (fac['website'] != '' ? fac['website'] : org['website'])
+          puts "Organization : #{org['name']} (#{org['id']})"
+          puts "Facility     : #{fac['name']} (#{fac['id']})"
+          puts "Address      : #{fac['address']}"
+          puts "Website      : #{website}"
+          puts "Exchanges    : #{ixes.size}"
+          if (o[:v] or o[:e]) and ixes.size > 0
+            ixlist = ixes.map { |ix| ix['ix_id'] }
+            ixes = pdb_query(o,"ix?id__in=#{ixlist.join(',')}")
+            aoh_concat(ixes,'location',['city','country','region_continent'])
+            table_opts = {
+              :display => {'id'=>'ID','name'=>'Name','location'=>'Location'},
+              :sort    => 'name',
+              :maxw    => {'name'=>34},
+              :indent  => '  ' }
+            aoh_table(ixes,table_opts)
+          end
+          puts "Networks     : #{nets.size}"
+          if (o[:v] or o[:n]) and nets.size > 0
+            netlist = nets.map { |net| net['net_id'] }
+            nets = pdb_query(o,"net?id__in=#{netlist.join(',')}")
+            table_opts = {
+              :display => {'id'=>'ID','asn'=>'ASN','name'=>'Name','website'=>'Website'},
+              :sort    => 'name',
+              :maxw    => {'name'=>34},
+              :indent  => '  ' }
+            aoh_table(nets,table_opts)
+          end
+          if (o[:v] or o[:N]) and fac['notes'] != ''
+            puts "Notes:\n#{fac['notes']}"
+          end
+        else
+          puts "#{facs.size} Matching Facilities =>"
+          aoh_address(facs)
+          table_opts = {
+            :display => {'id'=>'ID','name'=>'Name','address'=>'Address'},
+            :sort    => 'name',
+            :maxw    => {'name'=>34,'address'=>34},
+            :indent  => '  ' }
+          aoh_table(facs,table_opts)
+      end
+    #----------------------------------#
+    when /^((?:i(?:x)?)|(?:e(?:x(?:c(?:h(?:a(?:n(?:g(?:e)?)?)?)?)?)?)?))\s+(.*)$/i
+      ixes = case (arg = $2)
+        when /^\d+$/   then pdb_query(o,"ix/#{arg}")
+        when /^[^=]+$/ then pdb_query(o,"ix?name__contains=#{arg.gsub(/ /,'+')}")
+        else pdb_query(o,"ix?#{arg}")
+      end
+      case
+        when !ixes.is_a?(Array) || ixes.empty?
+          die(-1,"No matching exchanges found.")
+        when ixes.size == 1
+          ixes = pdb_query(o,"ix/#{ixes[0]['id']}") if !ixes[0]['org']
+          ix   = ixes[0]
+          org  = ix['org']
+          facs = ix['fac_set']
+          nets = pdb_query(o,"netixlan?ix_id=#{ix['id']}")
+          aoh_concat(ixes,'location',['city','country','region_continent'])
+          website = (ix['website'] != '' ? ix['website'] : org['website'])
+          puts "Organization : #{org['name']} (#{org['id']})"
+          puts "Exchange     : #{ix['name']} (#{ix['id']})"
+          puts "Location     : #{ix['location']}"
+          puts "Website      : #{website}"
+          puts "Facilities   : #{facs.size}"
+          if (o[:v] or o[:f]) and facs.size > 0
+            aoh_address(facs)
+            table_opts = {
+              :display => {'id'=>'ID','name'=>'Name','address'=>'Address'},
+              :sort    => 'name',
+              :maxw    => {'name'=>34,'address'=>34},
+              :indent  => '  ' }
+            aoh_table(facs,table_opts)
+          end
+          puts "Networks     : #{nets.size}"
+          # TODO: The name field in nets is unfortunately the name of the IX, not
+          # the network. We need to do another lookup to get the network names.
+          if (o[:v] or o[:n]) and nets.size > 0
+            table_opts = {
+              :display => {'id'=>'ID','asn'=>'ASN','ipaddr4'=>'IPv4','ipaddr6'=>'IPv6'},
+              :sort    => 'name',
+              :indent  => '  ' }
+            aoh_table(nets,table_opts)
+          end
+          if (o[:v] or o[:N]) and ix['notes'] != ''
+            puts "Notes:\n#{ix['notes']}"
+          end
+        else
+          puts "#{ixes.size} Matching Exchanges =>"
+          aoh_concat(ixes,'location',['city','country','region_continent'])
+          table_opts = {
+            :display => {'id'=>'ID','name'=>'Name','location'=>'Location'},
+            :sort    => 'name',
+            :maxw    => {'name'=>34},
+            :indent  => '  ' }
+          aoh_table(ixes,table_opts)
+      end
+    #----------------------------------#
+    when /^(r(?:a(?:w)?)?)\s+(.*)$/i
+      pp(pdb_query(o,$2))
+  end
+end
+
+main if $0 == __FILE__

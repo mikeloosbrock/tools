@@ -84,9 +84,13 @@ module Loosbrock
         end
         b = binding().taint
         begin
-          o = ERB.new(erb_str,4,trim,).result(b)
+          o = ERB.new(erb_str,4,trim).result(b)
         rescue => e
-          raise "An exception was raised while ERB-rendering #{@include_stack[-1]}:\n#{e}"
+          line = e.backtrace[0].split(':')[1]
+          raise "\nOh boy, this is not good. Like, really not good.\n" + \
+                "There appears to be a mistake on line #{line} of the '#{@include_stack[-1]}' template.\n" + \
+                "Specifically: #{e.to_s.split("\n")[0]}\n" + \
+                "Hopefully you know how to fix this, 'cause I got nothin."
         end
         debug(2,"Trace:")
         debug(2,"  " + @erb_trace_lines.join("\n  "))
@@ -98,13 +102,13 @@ module Loosbrock
       end
       #------------------------------------------------------------------------#
       # All of the following methods are 'helpers' that can be invoked from    #
-      # inside <% %> tags within erbt templates. They do 'helpful' things like #
-      # load/insert other (nested) templates and get/set/delete variables.     #
+      # inside <% ... %> tags within erbt templates. They do 'helpful' things  #
+      # like load/insert other (nested) templates and get/set/delete variables.#
       #------------------------------------------------------------------------#
       # Additional helper methods can be defined/registered from within the    #
       # templates themselves as well. Doing so adds the method to the global   #
       # binding (context) used by ERB. The intended use-case for this is       #
-      # macro-like functionality. #
+      # macro-like functionality.                                              #
       #------------------------------------------------------------------------#
       def define_helper(name,&block)
         erb_trace("define_helper('#{name}',&block)")
@@ -113,11 +117,12 @@ module Loosbrock
       #------------------------------------------------------------------------#
       # ERB-renders a file that was previously read using preload_includes()   #
       # and, unlike erbt_insert_file(), does _not_ return the eval results for #
-      # expansion in the calling template.                                     #
+      # expansion in the calling template. Use with <% ... %> tags.            #
       #------------------------------------------------------------------------#
       def erbt_load_file(file)
         erb_trace("load_file('#{file}'):")
         @erb_trace_indent.push('  ')
+        @include_stack.push(file)
         ERB.new(@includes[file]).result(binding)
         @include_stack.pop()
         @erb_trace_indent.pop()
@@ -125,11 +130,12 @@ module Loosbrock
       #------------------------------------------------------------------------#
       # ERB-renders a file that was previously read using preload_includes()   #
       # and, unlike erbt_load_file(), returns the eval results for expansion   #
-      # in the calling template.                                               #
+      # in the calling template. Use with <%= ... %> tags.                     #
       #------------------------------------------------------------------------#
       def erbt_insert_file(file,indent='',trim=nil)
         erb_trace("insert_file('#{file}','#{indent}',#{trim.nil? ? 'nil' : "'#{trim}'"}):")
         @erb_trace_indent.push('  ')
+        @include_stack.push(file)
         o = ERB.new(@includes[file],nil,trim).result(binding)
         @include_stack.pop()
         @erb_trace_indent.pop()
@@ -137,7 +143,7 @@ module Loosbrock
         return o
       end
       #------------------------------------------------------------------------#
-      # Gets the value of the variable @var.                                   #
+      # Gets the value of the @var variable.                                   #
       #------------------------------------------------------------------------#
       def get_var(var,default=nil)
         if @vars.key?(var)
@@ -154,7 +160,7 @@ module Loosbrock
       end
       alias_method(:v,:get_var)
       #------------------------------------------------------------------------#
-      # Gets the source of the variable @var.                                  #
+      # Gets the source of the @var variable.                                  #
       #------------------------------------------------------------------------#
       def get_src(var)
         if @vars.key?(var)
@@ -171,7 +177,7 @@ module Loosbrock
       alias_method(:get_from,:get_src)
       alias_method(:f,:get_src)
       #------------------------------------------------------------------------#
-      # Sets the variable @var to value @val, and its source to @src.          #
+      # Sets the @var variable's value to @val, and its source to @src.        #
       #------------------------------------------------------------------------#
       def set_var(var,val,src='set_var')
         erb_trace("set_var('#{var}','#{val}','#{src}')")
@@ -179,7 +185,7 @@ module Loosbrock
       end
       alias_method(:s,:set_var)
       #------------------------------------------------------------------------#
-      # Sets all the variables in the name/value hash @vars accordingly.       #
+      # Sets all variables in the @vars hash.                                  #
       #------------------------------------------------------------------------#
       def set_vars(vars,src='set_vars')
         if vars.class != Hash
@@ -191,46 +197,46 @@ module Loosbrock
         @erb_trace_indent.pop()
       end
       #------------------------------------------------------------------------#
-      # Sets the variable @var if it is undefined.                             #
+      # Sets the @var variable if it is currently undefined.                   #
       #------------------------------------------------------------------------#
       def set_var_if_undefined(var,val,src='set_var_if_undefined')
         erb_trace("set_var_if_undefined('#{var}','#{val}','#{src}')")
         set_var(var,val,src) if not @vars.key?(var)
       end
       #------------------------------------------------------------------------#
-      # Sets all the variables in the name/value hash @vars that are undefined.#
+      # Sets all variables in the @vars hash that are currently undefined.     #
       #------------------------------------------------------------------------#
       def set_vars_if_undefined(vars,src='set_vars_if_undefined')
         if vars.class != Hash
           raise "The first ('vars') argument to set_vars_if_undefined() must be a hash."
         end
-        erb_trace("set_vars_if_undefined('#{vars}','#{src}') =>")
+        erb_trace("set_vars_if_undefined(#{vars},'#{src}') =>")
         @erb_trace_indent.push('  ')
         vars.each { |var,val| set_var(var,val,src) if not @vars.key?(var) }
         @erb_trace_indent.pop()
       end
       #------------------------------------------------------------------------#
-      # Sets the variable @var if its source matches the regex @from.          #
+      # Sets the @var variable if its source matches the @from regex.          #
       #------------------------------------------------------------------------#
       def set_var_if_from(var,val,from,src='set_var_if_from')
         erb_trace("set_var_if_from('#{var}','#{val}','#{from}','#{src}')")
         set_var(var,val,src) if @vars.key?(var) and @vars[var][:src] =~ /#{from}/
       end
       #------------------------------------------------------------------------#
-      # Sets all the variables in the name/value hash @vars that have...     #
-      # source matches the 
+      # Sets all variables in the @vars hash with sources matching the @from   #
+      # regex.                                                                 # 
       #------------------------------------------------------------------------#
       def set_vars_if_from(vars,from,src='set_vars_if_from')
         if vars.class != Hash
           raise "The first ('vars') argument to set_vars_if_from() must be a hash."
         end
-        erb_trace("set_vars_if_from('#{vars}','#{from}','#{src}') =>")
+        erb_trace("set_vars_if_from(#{vars},'#{from}','#{src}') =>")
         @erb_trace_indent.push('  ')
         vars.each { |var,val| set_var_if_from(var,val,from,src) }
         @erb_trace_indent.pop()
       end
       #------------------------------------------------------------------------#
-      # Sets the variable @var if it's undefined, or if it's source does not   #
+      # Sets the @var variable if its either undefined. or its source does not #
       # match the @from regex.                                                 #
       #------------------------------------------------------------------------#
       def set_var_if_not_from(var,val,from,src='set_var_if_not_from')
@@ -238,14 +244,14 @@ module Loosbrock
         set_var(var,val,src) if not @vars.key?(var) or @vars[var][:src] !~ /#{from}/
       end
       #------------------------------------------------------------------------#
-      # Sets all variables in the name/value hash @vars which are undefined,   #
-      # or whose source does not match the @from regex.                        #
+      # Sets all variables in the @vars hash that are either undefined, or     #
+      # have sources not matching the @from regex.                             #
       #------------------------------------------------------------------------#
       def set_vars_if_not_from(vars,from,src='set_vars_if_not_from')
         if vars.class != Hash
           raise "The first ('vars') argument to set_vars_if_not_from() must be a hash."
         end
-        erb_trace("set_vars_if_not_from('#{vars}','#{from}','#{src}') =>")
+        erb_trace("set_vars_if_not_from(#{vars},'#{from}','#{src}') =>")
         @erb_trace_indent.push('  ')
         vars.each do |var,val|
           set_var(var,val,src) if not @vars.key?(var) or @vars[var][:src] !~ /#{from}/
@@ -253,7 +259,7 @@ module Loosbrock
         @erb_trace_indent.pop()
       end
       #------------------------------------------------------------------------#
-      # Deletes the variable @var.                                             #
+      # Deletes the @var variable.                                             #
       #------------------------------------------------------------------------#
       def del_var(var)
         if @vars.key?(var)
@@ -268,16 +274,16 @@ module Loosbrock
       # Deletes all variables in the @vars array.                              #
       #------------------------------------------------------------------------#
       def del_vars(vars)
-        erb_trace("del_vars('#{vars}') =>")
-        @erb_trace_indent.push('  ')
         if vars.class != Array
           raise "The first ('vars') argument to del_vars() must be an array."
         end
+        erb_trace("del_vars(['#{vars.join("','")}']) =>")
+        @erb_trace_indent.push('  ')
         vars.each { |var| del_var(var) }
         @erb_trace_indent.pop()
       end
       #------------------------------------------------------------------------#
-      # Deletes the variable @var if it's source matches the @from regex.      #
+      # Deletes the @var variable if its source matches the @from regex.       #
       #------------------------------------------------------------------------#
       def del_var_if_from(var,from)
         erb_trace("del_var_if_from('#{var}','#{from}')")
@@ -288,13 +294,13 @@ module Loosbrock
       # @from regex.                                                           #
       #------------------------------------------------------------------------#
       def del_vars_if_from(vars,from)
-        erb_trace("del_vars_if_from('#{vars}','#{from}') =>")
-        @erb_trace_indent.push('  ')
         if vars.class != Array
           raise "The first ('vars') argument to del_vars_if_from() must be an array."
         end
+        erb_trace("del_vars_if_from(['#{vars.join("','")}'],'#{from}') =>")
+        @erb_trace_indent.push('  ')
         vars.each do |var|
-          del_var(var) if not @vars.key?(var) or @vars[var][:src] =~ /#{from}/
+          del_var(var) if @vars.key?(var) and @vars[var][:src] =~ /#{from}/
         end
         @erb_trace_indent.pop()
       end
@@ -310,22 +316,22 @@ module Loosbrock
         @erb_trace_indent.pop()
       end
       #------------------------------------------------------------------------#
-      # Deletes the variable @var if its src does not match the regex @from.   #
+      # Deletes the @var variable if its src does not match the @from regex.   #
       #------------------------------------------------------------------------#
       def del_var_if_not_from(var,from)
         erb_trace("del_var_if_not_from('#{var}','#{from}')")
-        del_var(var) if @vars.key?(var) and @vars[var][:src] !~ /#{from}/
+        del_var(var) if not @vars.key?(var) or @vars[var][:src] !~ /#{from}/
       end
       #------------------------------------------------------------------------#
-      # Deletes the variables in @vars with sources not matching the #
+      # Deletes all variables in the @vars array with sources not matching the #
       # @from regex.                                                           #
       #------------------------------------------------------------------------#
       def del_vars_if_not_from(vars,from)
-        erb_trace("del_vars_if_not_from('#{vars}','#{from}') =>")
-        @erb_trace_indent.push('  ')
         if vars.class != Array
           raise "The first ('vars') argument to del_vars_if_not_from() must be an array."
         end
+        erb_trace("del_vars_if_not_from(['#{vars.join("','")}'],'#{from}') =>")
+        @erb_trace_indent.push('  ')
         vars.each do |var|
           del_var(var) if not @vars.key?(var) or @vars[var][:src] !~ /#{from}/
         end
@@ -343,17 +349,19 @@ module Loosbrock
         @erb_trace_indent.pop()
       end
     end
-    RenderContext.untrust # needed for SAFE_LEVEL == 4
+    RenderContext.untrust # needed for SAFE_LEVEL=4 to work
     #==========================================================================#
     #
     #
     #
     def self.cli_app
+      begin
       app = File.basename($0)
       (op = OptionParser.new do |p|
         p.banner =
           "Usage:\n" +
           "  #{app} [options] < template-and-vars.yml  # template and vars as single yaml stream on stdin\n" +
+          "  #{app} [options] < template.erb           # template and vars as single yaml stream on stdin\n" +
           "  #{app} [options] template-and-vars.yml    # template and vars in one (yaml) file\n" +
           "  #{app} [options] template.erb vars.yml    # template and vars in separate files\n" +
           "  #{app} [options] template < vars      # template in file, vars on srtdin\n" +
@@ -363,11 +371,17 @@ module Loosbrock
         p.on("-d VARS","Variable defaults. VARS is a YAML file or string containing a var=>val hash.") {}
         p.on("-p",".") {}
         p.on("-m",".") {}
-        p.on("-h","Display this help message and exit.") { puts(self.help); exit(0) }
+        p.on("-h","Display this help message and exit.") { puts(p.help); exit(0) }
       end).parse!
+      end
       vars = {}
       vars = build_vars(vars,'erbt-cli')
-      rctx = RenderContext.new(File.read(ARGV[0]),ARGV[0],vars)
+      begin
+        rctx = RenderContext.new(File.read(ARGV[0]),ARGV[0],vars)
+      rescue e
+        puts "#{e.to_s.split("\n")[0..4].join("\n")}"
+        exit -1
+      end
       puts rctx.render()
     end
   end

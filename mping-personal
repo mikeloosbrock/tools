@@ -1,0 +1,131 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'pty'
+
+module Mike
+  module MPing
+    ############################################################################
+    class Stats
+      def initialize()
+        @splits = []
+        start_split('overall')
+      end
+      def start_split(name=nil,time=nil)
+        @splits << {
+          'name'  => (name.nil? ? "split-#{@splits.size}" : name),
+          'start' => (time.nil? ? Time.now : time),
+          'stop'  => nil,
+          'stats' => {}
+        }
+      end
+      def rename_split(index,name)
+        if index < @splits.size
+          @splits[index]['name'] = name
+        end
+      end
+      def stop_split(index,time=nil)
+        if index < @splits.size and @splits[index]['stop'].nil?
+          @splits[index]['stop'] = (time.nil? ? Time.now : time)
+        end
+      end
+      def update(tx,rx,rtt)
+        next if tx < 1
+        now = Time.now
+        @splits.each do |split|
+          s = split['stats']
+          s[:tx]  = (s[:tx] or 0) + tx
+          s[:rx]  = (s[:rx] or 0) + rx
+          s[:rtt] = rtt
+          s[:min] = rtt if not s[:min] or s[:min] > rtt
+          s[:max] = rtt if not s[:max] or s[:max] < rtt
+          s[:sum] = (s[:sum] or 0) + rtt
+          if rx > 0
+            if s[:state] != :up
+              s[:ucnt] = (s[:ucnt] or 0) + 1
+            end
+            if s[:state] == :down
+              s[:dtime] = (s[:dtime] or 0) + (now - s[:start])
+              s[:start] = now
+            end
+            s[:state] = :up
+            s[:lcnt] = tx - rx
+            s[:loss] = (tx > rx ? true : false)
+          else
+            @s[:lstart] = now if @s[:state] == :up
+            @s[:lcnt] = (@s[:lcnt] or 0) + tx
+            if @s[:lcnt] > @opts[:l]
+              if @s[:state] == :up
+                @s[:utime] = (@s[:utime] or 0) + (@s[:lstart] - @s[:start])
+                @s[:start] = @s[:lstart]
+                @s[:dcnt]  = (@s[:dcnt] or 0) + 1
+                @s[:state] = :down
+              end
+            end
+          end
+        end
+      end
+      def [](field)
+        return @s[field].to_s
+      end
+      def get(fields)
+        values = []
+        fields.each { |f| values << @s[f].to_s }
+        return values
+      end
+    end
+    ############################################################################
+    class Pinger
+      def initialize(targets,opts={})
+        @fping = nil; @stats = {}
+        targets.each do |target|
+          @stats[target] = MPing::Stats.new
+        end
+      end
+      def start
+        regex = /^(\S+)\s+: xmt\/rcv\/%loss = (\d+)\/(\d+)\/\S+ min\/avg\/max = \S+\/([0-9.]+)\/.*$/
+        @fping = Thread.new do
+          Pty.spawn(fping) do |stdout,stdin,pid|
+            stdout.each do |line|
+              next if line.strip! !~ stats_regex
+              target, tx, rx, rtt = $1, $2.to_i, $3.to_i, $4.to_f
+              next if not @stats.key?(target)
+              @stats[target].update(tx,rx,rtt)
+            end
+          end
+        end
+      end
+      def stop
+        @fping_thread.kill if @fping_thread
+      end
+    end
+    ############################################################################
+    def self.cli_app()
+      begin
+        (op = OptionParser.new do |p|
+          p.banner =
+            "Usage:\n"+
+            "  #{File.basename($0)} [options] host [host...]\n" +
+            "Options:"
+          p.summary_indent = '  '; p.summary_width = 8
+          p.on("-l","") { || }
+          p.on("-j","") { || }
+          p.on("-H HOOK","") { || }
+          p.on("-h","Display this help message and exit.") { puts(self.help); exit(0) }
+        end).parse!
+      rescue
+      end
+      pinger = Pinger.new(ARGV)
+      pinger.start
+      while true
+        pinger.stats.each { |s| s << stats.get() }
+        w = {}; s.each { |i| i.each { |j| w} }
+
+        end
+        sleep(1)
+      end
+    end
+  end
+end
+Mike::MPing::cli_app() if $0 == __FILE__
+
