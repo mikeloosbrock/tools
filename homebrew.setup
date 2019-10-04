@@ -1,0 +1,9 @@
+#!/bin/bash
+# OSX Homebrew (https://brew.sh/)
+brew update
+brew upgrade
+brew install \
+  fping mtr nmap iperf iperf3 ipcalc \
+  rbenv ruby-build \
+  pyenv pyenv-virtualenv \
+  awscli watch tree pv pwgen tree
